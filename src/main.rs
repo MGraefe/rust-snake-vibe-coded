@@ -8,8 +8,6 @@ use std::time::Duration;
 // GAME CONSTANTS
 // ============================================================================
 
-const FRAME_DURATION: Duration = Duration::from_millis(100); // Game speed (100ms = 10 FPS)
-
 // Playing field size options
 #[derive(Debug, Clone, Copy)]
 struct FieldSize {
@@ -38,6 +36,32 @@ const FIELD_SIZES: [FieldSize; 4] = [
         name: "Large",
         width: 60,
         height: 40,
+    },
+];
+
+// Difficulty levels control snake movement speed
+#[derive(Debug, Clone, Copy)]
+struct Difficulty {
+    name: &'static str,
+    description: &'static str,
+    delay_ms: u64,
+}
+
+const DIFFICULTIES: [Difficulty; 3] = [
+    Difficulty {
+        name: "Easy",
+        description: "Relaxed pace for beginners",
+        delay_ms: 200,
+    },
+    Difficulty {
+        name: "Medium",
+        description: "Standard challenge",
+        delay_ms: 100,
+    },
+    Difficulty {
+        name: "Hard",
+        description: "Fast-paced action",
+        delay_ms: 70,
     },
 ];
 
@@ -91,10 +115,11 @@ struct GameState {
     offset_x: i32, // Offset for centering the game window
     offset_y: i32, // Offset for centering the game window
     waiting_for_start: bool, // Initial pause until first arrow key press
+    frame_delay: Duration, // Movement speed delay based on difficulty
 }
 
 impl GameState {
-    fn new(width: i32, height: i32, offset_x: i32, offset_y: i32) -> Self {
+    fn new(width: i32, height: i32, offset_x: i32, offset_y: i32, delay_ms: u64) -> Self {
         let mut snake = VecDeque::new();
         // Start snake in the center
         let center_x = width / 2;
@@ -125,6 +150,7 @@ impl GameState {
             offset_x,
             offset_y,
             waiting_for_start: true, // Start paused until first arrow key
+            frame_delay: Duration::from_millis(delay_ms),
         };
 
         game.spawn_food();
@@ -410,6 +436,84 @@ impl Renderer {
         self.window.getch();
     }
 
+    fn show_difficulty_menu(&self) -> Option<usize> {
+        // Use blocking input for menu (prevents flickering)
+        self.window.timeout(-1);
+
+        // Helper function to draw the menu
+        let draw_menu = || {
+            self.window.clear();
+
+            let start_y = 2;
+            let start_x = 2;
+
+            // Title
+            let color_pair = pancurses::COLOR_PAIR(4);
+            self.window.attron(color_pair);
+            self.window.mvprintw(start_y, start_x, "=== SELECT DIFFICULTY ===");
+            self.window.attroff(color_pair);
+
+            // Options
+            for (i, difficulty) in DIFFICULTIES.iter().enumerate() {
+                let y = start_y + 2 + (i as i32 * 3);
+                let option_text = format!("  {}. {}", i + 1, difficulty.name);
+
+                // Color based on difficulty level
+                let option_color = match i {
+                    0 => pancurses::COLOR_PAIR(1), // Easy - green
+                    1 => pancurses::COLOR_PAIR(3), // Medium - yellow
+                    2 => pancurses::COLOR_PAIR(2), // Hard - red
+                    _ => pancurses::COLOR_PAIR(4),
+                };
+
+                self.window.attron(option_color);
+                self.window.mvprintw(y, start_x, &option_text);
+                self.window.attroff(option_color);
+
+                // Description
+                let desc_text = format!("     {} ({}ms delay)", difficulty.description, difficulty.delay_ms);
+                self.window.attron(pancurses::COLOR_PAIR(4));
+                self.window.mvprintw(y + 1, start_x, &desc_text);
+                self.window.attroff(pancurses::COLOR_PAIR(4));
+            }
+
+            // Instructions
+            let y = start_y + 2 + (DIFFICULTIES.len() as i32 * 3) + 1;
+            self.window.mvprintw(y, start_x, "Press 1-3 to select difficulty, or Q to quit");
+
+            self.window.refresh();
+        };
+
+        // Draw menu once before starting input loop
+        draw_menu();
+
+        // Input loop
+        loop {
+            // Block and wait for user input (no flickering)
+            match self.window.getch() {
+                Some(Input::Character('1')) => {
+                    self.window.timeout(0); // Restore non-blocking for gameplay
+                    return Some(0);
+                }
+                Some(Input::Character('2')) => {
+                    self.window.timeout(0); // Restore non-blocking for gameplay
+                    return Some(1);
+                }
+                Some(Input::Character('3')) => {
+                    self.window.timeout(0); // Restore non-blocking for gameplay
+                    return Some(2);
+                }
+                Some(Input::Character('q')) | Some(Input::Character('Q')) => {
+                    self.window.timeout(0); // Restore non-blocking before exit
+                    return None;
+                }
+                _ => {
+                    // Invalid input - don't redraw, just wait for next input
+                }
+            }
+        }
+    }
+
     fn render(&self, game: &GameState) {
         self.window.clear();
 
@@ -434,7 +538,7 @@ impl Renderer {
 
         self.window.mvprintw(y, x, &format!("=== RUST SNAKE ==="));
         self.window.mvprintw(y + 1, x, &format!("Score: {}  |  Length: {}  |  Speed: {}ms",
-            game.score, game.snake.len(), FRAME_DURATION.as_millis()));
+            game.score, game.snake.len(), game.frame_delay.as_millis()));
         self.window.mvprintw(y + 2, x, &format!("Controls: Arrow Keys=Move  P=Pause  Q=Quit"));
 
         self.window.attroff(color_pair);
@@ -549,8 +653,9 @@ fn handle_input(window: &Window, game: &mut GameState) -> bool {
         }
         Some(Input::Character('r')) | Some(Input::Character('R')) => {
             if game.status == GameStatus::GameOver {
-                // Restart game with same dimensions and offsets
-                *game = GameState::new(game.game_width, game.game_height, game.offset_x, game.offset_y);
+                // Restart game with same dimensions, offsets, and difficulty
+                let delay_ms = game.frame_delay.as_millis() as u64;
+                *game = GameState::new(game.game_width, game.game_height, game.offset_x, game.offset_y, delay_ms);
             }
         }
         Some(Input::KeyUp) => {
@@ -601,15 +706,24 @@ fn main() {
 
     let selected_size = &FIELD_SIZES[size_index];
 
+    // Show difficulty selection menu
+    let difficulty_index = match renderer.show_difficulty_menu() {
+        Some(idx) => idx,
+        None => return, // User quit from menu
+    };
+
+    let selected_difficulty = &DIFFICULTIES[difficulty_index];
+
     // Calculate offsets to center the game window
     let (offset_x, offset_y) = renderer.calculate_offsets(selected_size.width, selected_size.height);
 
-    // Initialize game state with selected size
+    // Initialize game state with selected size and difficulty
     let mut game = GameState::new(
         selected_size.width,
         selected_size.height,
         offset_x,
         offset_y,
+        selected_difficulty.delay_ms,
     );
 
     // Initial render
@@ -628,8 +742,8 @@ fn main() {
         // Render current state
         renderer.render(&game);
 
-        // Frame rate control
-        thread::sleep(FRAME_DURATION);
+        // Frame rate control (uses difficulty-based delay)
+        thread::sleep(game.frame_delay);
     }
 
     // Cleanup happens automatically via Renderer's Drop trait
