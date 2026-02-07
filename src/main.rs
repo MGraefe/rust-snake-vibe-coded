@@ -47,7 +47,7 @@ struct Difficulty {
     delay_ms: u64,
 }
 
-const DIFFICULTIES: [Difficulty; 3] = [
+const DIFFICULTIES: [Difficulty; 4] = [
     Difficulty {
         name: "Easy",
         description: "Relaxed pace for beginners",
@@ -62,6 +62,11 @@ const DIFFICULTIES: [Difficulty; 3] = [
         name: "Hard",
         description: "Fast-paced action",
         delay_ms: 70,
+    },
+    Difficulty {
+        name: "Custom",
+        description: "Enter your own delay",
+        delay_ms: 0, // Placeholder - will be set by user input
     },
 ];
 
@@ -463,6 +468,7 @@ impl Renderer {
                     0 => pancurses::COLOR_PAIR(1), // Easy - green
                     1 => pancurses::COLOR_PAIR(3), // Medium - yellow
                     2 => pancurses::COLOR_PAIR(2), // Hard - red
+                    3 => pancurses::COLOR_PAIR(4), // Custom - white/cyan
                     _ => pancurses::COLOR_PAIR(4),
                 };
 
@@ -470,8 +476,12 @@ impl Renderer {
                 self.window.mvprintw(y, start_x, &option_text);
                 self.window.attroff(option_color);
 
-                // Description
-                let desc_text = format!("     {} ({}ms delay)", difficulty.description, difficulty.delay_ms);
+                // Description (skip delay_ms for Custom option)
+                let desc_text = if i == 3 {
+                    format!("     {}", difficulty.description)
+                } else {
+                    format!("     {} ({}ms delay)", difficulty.description, difficulty.delay_ms)
+                };
                 self.window.attron(pancurses::COLOR_PAIR(4));
                 self.window.mvprintw(y + 1, start_x, &desc_text);
                 self.window.attroff(pancurses::COLOR_PAIR(4));
@@ -479,7 +489,7 @@ impl Renderer {
 
             // Instructions
             let y = start_y + 2 + (DIFFICULTIES.len() as i32 * 3) + 1;
-            self.window.mvprintw(y, start_x, "Press 1-3 to select difficulty, or Q to quit");
+            self.window.mvprintw(y, start_x, "Press 1-4 to select difficulty, or Q to quit");
 
             self.window.refresh();
         };
@@ -503,6 +513,10 @@ impl Renderer {
                     self.window.timeout(0); // Restore non-blocking for gameplay
                     return Some(2);
                 }
+                Some(Input::Character('4')) => {
+                    // Keep blocking mode for custom input dialog
+                    return Some(3);
+                }
                 Some(Input::Character('q')) | Some(Input::Character('Q')) => {
                     self.window.timeout(0); // Restore non-blocking before exit
                     return None;
@@ -512,6 +526,122 @@ impl Renderer {
                 }
             }
         }
+    }
+
+    /// Get custom delay value from user input (10-1000ms)
+    /// Returns Some(delay_ms) on success, None if user cancels (Q)
+    fn get_custom_delay(&self) -> Option<u64> {
+        // Already in blocking mode from show_difficulty_menu
+        self.window.timeout(-1);
+
+        loop {
+            self.window.clear();
+
+            let start_y = 2;
+            let start_x = 2;
+
+            // Title
+            self.window.attron(pancurses::COLOR_PAIR(4));
+            self.window.mvprintw(start_y, start_x, "=== CUSTOM DIFFICULTY ===");
+            self.window.attroff(pancurses::COLOR_PAIR(4));
+
+            // Instructions
+            self.window.mvprintw(start_y + 2, start_x, "Enter delay in milliseconds (10-1000):");
+            self.window.mvprintw(start_y + 3, start_x, "Lower values = faster game (harder)");
+            self.window.mvprintw(start_y + 4, start_x, "Higher values = slower game (easier)");
+            self.window.mvprintw(start_y + 6, start_x, "Examples: 50 = very hard, 100 = medium, 200 = easy");
+            self.window.mvprintw(start_y + 8, start_x, "Press Q to cancel and return to difficulty menu");
+
+            // Input prompt
+            self.window.mvprintw(start_y + 10, start_x, "Delay (ms): ");
+            self.window.refresh();
+
+            // Enable echo and cursor for input
+            pancurses::echo();
+            pancurses::curs_set(1);
+
+            // Read user input as a string
+            let mut input = String::new();
+            let input_x = start_x + 12; // Position after "Delay (ms): "
+            self.window.mv(start_y + 10, input_x);
+
+            // Read characters one by one
+            loop {
+                match self.window.getch() {
+                    Some(Input::Character('\n')) | Some(Input::KeyEnter) => {
+                        break; // User pressed Enter
+                    }
+                    Some(Input::Character('q')) | Some(Input::Character('Q')) => {
+                        if input.is_empty() {
+                            // Q pressed with no input = cancel
+                            pancurses::noecho();
+                            pancurses::curs_set(0);
+                            self.window.timeout(0); // Restore non-blocking
+                            return None;
+                        } else {
+                            // Q is part of input (though invalid as number)
+                            input.push('q');
+                        }
+                    }
+                    Some(Input::Character(c)) if c.is_ascii_digit() || c == '\x08' || c == '\x7f' => {
+                        // Allow digits and backspace
+                        if c == '\x08' || c == '\x7f' {
+                            // Backspace
+                            input.pop();
+                        } else {
+                            input.push(c);
+                        }
+                    }
+                    Some(Input::Character(c)) => {
+                        // Allow other characters but they'll cause parse error
+                        input.push(c);
+                    }
+                    _ => {}
+                }
+            }
+
+            // Disable echo and cursor
+            pancurses::noecho();
+            pancurses::curs_set(0);
+
+            // Parse and validate input
+            match input.trim().parse::<u64>() {
+                Ok(delay) if delay >= 10 && delay <= 1000 => {
+                    self.window.timeout(0); // Restore non-blocking for gameplay
+                    return Some(delay);
+                }
+                Ok(delay) => {
+                    // Out of range
+                    self.show_custom_delay_error(&format!(
+                        "Delay {} is out of range. Please enter a value between 10 and 1000.",
+                        delay
+                    ));
+                }
+                Err(_) => {
+                    // Invalid input
+                    self.show_custom_delay_error(&format!(
+                        "Invalid input: '{}'. Please enter a number between 10 and 1000.",
+                        input.trim()
+                    ));
+                }
+            }
+        }
+    }
+
+    /// Show error message for invalid custom delay input
+    fn show_custom_delay_error(&self, message: &str) {
+        self.window.clear();
+
+        let color_pair = pancurses::COLOR_PAIR(2);
+        self.window.attron(color_pair);
+        self.window.mvprintw(2, 2, "ERROR: Invalid Input");
+        self.window.attroff(color_pair);
+
+        self.window.mvprintw(4, 2, message);
+        self.window.mvprintw(6, 2, "Press any key to try again...");
+
+        self.window.refresh();
+        self.window.getch(); // Wait for key press
     }
 
     fn render(&self, game: &GameState) {
@@ -712,7 +842,17 @@ fn main() {
         None => return, // User quit from menu
     };
 
-    let selected_difficulty = &DIFFICULTIES[difficulty_index];
+    // Get delay value (either preset or custom)
+    let delay_ms = if difficulty_index == 3 {
+        // Custom difficulty - get user input
+        match renderer.get_custom_delay() {
+            Some(delay) => delay,
+            None => return, // User canceled custom input
+        }
+    } else {
+        // Preset difficulty
+        DIFFICULTIES[difficulty_index].delay_ms
+    };
 
     // Calculate offsets to center the game window
     let (offset_x, offset_y) = renderer.calculate_offsets(selected_size.width, selected_size.height);
@@ -723,7 +863,7 @@ fn main() {
         selected_size.height,
         offset_x,
         offset_y,
-        selected_difficulty.delay_ms,
+        delay_ms,
     );
 
     // Initial render

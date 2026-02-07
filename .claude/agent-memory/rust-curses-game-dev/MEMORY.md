@@ -15,6 +15,8 @@
 - Use `timeout(0)` for non-blocking input (critical for game loops)
 - Use `timeout(-1)` for blocking input in menus to prevent flickering
 - **Menu flickering fix**: Draw menu once, use blocking input, only redraw when necessary (after dialogs)
+- **Text input pattern**: Enable echo with `echo()`, show cursor with `curs_set(1)`, disable both after input
+- **Custom input dialog**: Read chars one-by-one with getch() loop, handle backspace (\x08, \x7f), validate after Enter
 - Color pairs: Initialize with `start_color()` and `init_pair()`, apply with `COLOR_PAIR(n)`
 - Check `has_colors()` before using colors for terminal compatibility
 
