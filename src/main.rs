@@ -359,7 +359,7 @@ impl Renderer {
 
             // Instructions
             let y = start_y + 2 + (FIELD_SIZES.len() as i32 * 2) + 1;
-            self.window.mvprintw(y, start_x, "Press 1-3 to select a size, or Q to quit");
+            self.window.mvprintw(y, start_x, "Press 1-4 to select a size, or Q to quit");
 
             let terminal_info = format!(
                 "Terminal size: {}x{}",
@@ -402,6 +402,15 @@ impl Renderer {
                         return Some(2);
                     } else {
                         self.show_size_error(&FIELD_SIZES[2]);
+                        draw_menu(); // Redraw menu after error dialog
+                    }
+                }
+                Some(Input::Character('4')) => {
+                    if self.check_size_fits(&FIELD_SIZES[3]) {
+                        self.window.timeout(0); // Restore non-blocking for gameplay
+                        return Some(3);
+                    } else {
+                        self.show_size_error(&FIELD_SIZES[3]);
                         draw_menu(); // Redraw menu after error dialog
                     }
                 }
